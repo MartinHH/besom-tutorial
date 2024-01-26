@@ -161,6 +161,34 @@ import spray.json.*
       endpointConfiguration = RestApiEndpointConfigurationArgs(types = "REGIONAL")
     )
   )
+
+  // Create a new IAM role for API Gateway
+  val apiGatewayRole = iam.Role(
+    "apiGatewayCloudwatchRole",
+    iam.RoleArgs(
+      assumeRolePolicy =
+        "{\"Version\": \"2012-10-17\",\"Statement\": [{\"Effect\": \"Allow\",\"Principal\":" +
+          " {\"Service\": \"apigateway.amazonaws.com\"},\"Action\": \"sts:AssumeRole\"}]}"
+    )
+  )
+
+  // Attach the policy to the IAM role for API Gateway to write logs to CloudWatch
+  val policyAttachment = iam.PolicyAttachment(
+    "apiGatewayCloudwatchRolePolicy",
+    iam.PolicyAttachmentArgs(
+      policyArn = "arn:aws:iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs",
+      roles = List(apiGatewayRole.name)
+    )
+  )
+
+  // Set the CloudWatch Logs role ARN in API Gateway account settings
+  val account = apigateway.Account(
+    "apiGatewayAccount",
+    apigateway.AccountArgs(
+      cloudwatchRoleArn = apiGatewayRole.arn
+    )
+  )
+
   val feedLambdaPermission = lambda.Permission(
     "feedLambdaPermission",
     lambda.PermissionArgs(
@@ -278,6 +306,10 @@ import spray.json.*
         metricsEnabled = true,
         loggingLevel = "ERROR"
       )
+    ),
+    CustomResourceOptions(
+      // not sure if we need to depend on all three here, but it shouldn't hurt)
+      dependsOn = List(apiGatewayRole, policyAttachment, account).sequence
     )
   )
 
@@ -291,6 +323,9 @@ import spray.json.*
     _        <- feedLambda
     _        <- addLambda
     _        <- api
+    _        <- apiGatewayRole
+    _        <- policyAttachment
+    _        <- account
     _        <- feedLambdaPermission
     _        <- addLambdaPermission
     _        <- feedMethod
